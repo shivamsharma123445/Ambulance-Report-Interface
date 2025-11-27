@@ -114,7 +114,7 @@ def login_form_container() -> rx.Component:
                 rx.el.div(
                     rx.el.a(
                         "Forgot your password?",
-                        href="#",
+                        href="/forgot-password",
                         class_name="text-sm font-medium text-teal-600 hover:text-teal-500",
                     ),
                     class_name="flex justify-end mt-4",

@@ -2,6 +2,7 @@ import reflex as rx
 from app.states.auth_state import AuthState
 from app.states.report_state import ReportState
 from app.pages.login import login_page
+from app.pages.forgot_password import forgot_password_page
 from app.pages.profile import profile_page
 from app.pages.create_report import create_report_page
 from app.pages.report_detail import report_detail_page
@@ -28,6 +29,9 @@ app = rx.App(
     ],
 )
 app.add_page(login_page, route="/login", on_load=AuthState.redirect_if_authenticated)
+app.add_page(
+    forgot_password_page, route="/forgot-password", on_load=AuthState.clear_reset_state
+)
 app.add_page(profile_page, route="/profile", on_load=AuthState.require_auth)
 app.add_page(create_report_page, route="/create-report", on_load=AuthState.require_auth)
 app.add_page(report_detail_page, route="/report/[id]", on_load=AuthState.require_auth)
