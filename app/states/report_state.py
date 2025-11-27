@@ -1,7 +1,10 @@
 import reflex as rx
-from typing import Optional
+from typing import Optional, Any
 import datetime
 import logging
+from sqlmodel import select
+from app.models import PatientReport
+from app.states.auth_state import AuthState
 
 
 class ReportState(rx.State):
@@ -51,6 +54,46 @@ class ReportState(rx.State):
     report_id_being_edited: Optional[str] = None
     show_delete_dialog: bool = False
     report_id_to_delete: str = ""
+
+    async def _load_reports_from_db(self):
+        """Helper to reload reports from DB for current user"""
+        auth_state = await self.get_state(AuthState)
+        if not auth_state.current_user:
+            self.reports = []
+            return
+        with rx.session() as session:
+            db_reports = session.exec(
+                select(PatientReport)
+                .where(PatientReport.user_id == auth_state.current_user.id)
+                .order_by(PatientReport.created_at.desc())
+            ).all()
+            self.reports = [
+                {
+                    "id": str(r.id),
+                    "user_id": r.user_id,
+                    "location": r.location,
+                    "accident_type": r.accident_type,
+                    "accident_date": r.accident_date,
+                    "accident_time": r.accident_time,
+                    "patient_count": r.patient_count,
+                    "is_patient_speaking": r.is_patient_speaking,
+                    "patient_name": r.patient_name,
+                    "patient_age": r.patient_age,
+                    "patient_gender": r.patient_gender,
+                    "patient_contact": r.patient_contact,
+                    "patient_allergies": r.patient_allergies,
+                    "patient_history": r.patient_history,
+                    "est_patient_age": r.est_patient_age,
+                    "est_patient_gender": r.est_patient_gender,
+                    "consciousness_level": r.consciousness_level,
+                    "injuries": r.injuries,
+                    "assessment": r.assessment,
+                    "treatment": r.treatment,
+                    "photos": r.photos,
+                    "created_at": r.created_at.isoformat() if r.created_at else "",
+                }
+                for r in db_reports
+            ]
 
     @rx.var
     def total_reports(self) -> int:
@@ -205,80 +248,105 @@ class ReportState(rx.State):
         self.uploaded_photos.remove(filename)
 
     @rx.event
-    def save_report(self):
-        """Save the completed report."""
-        is_edit = self.report_id_being_edited is not None
-        if is_edit:
-            report_id = self.report_id_being_edited
-            created_at = datetime.datetime.now().isoformat()
-            for r in self.reports:
-                if r["id"] == report_id:
-                    created_at = r.get("created_at", created_at)
-                    break
-        else:
-            report_id = str(len(self.reports) + 1)
-            created_at = datetime.datetime.now().isoformat()
-        report_data = {
-            "id": report_id,
-            "created_at": created_at,
-            "location": self.location,
-            "accident_type": self.accident_type,
-            "accident_date": self.accident_date,
-            "accident_time": self.accident_time,
-            "patient_count": self.patient_count,
-            "is_patient_speaking": self.is_patient_speaking,
-            "patient_name": self.patient_name,
-            "patient_age": self.patient_age,
-            "patient_gender": self.patient_gender,
-            "patient_contact": self.patient_contact,
-            "patient_allergies": self.patient_allergies,
-            "patient_history": self.patient_history,
-            "est_patient_age": self.est_patient_age,
-            "est_patient_gender": self.est_patient_gender,
-            "consciousness_level": self.consciousness_level,
-            "injuries": {
-                "head": self.injury_head,
-                "chest": self.injury_chest,
-                "abdomen": self.injury_abdomen,
-                "legs": self.injury_legs,
-                "arms": self.injury_arms,
-                "spine": self.injury_spine,
-                "burns": self.injury_burns,
-            },
-            "assessment": {
-                "breathing": self.breathing_status,
-                "bleeding": self.bleeding_status,
-                "bleeding_desc": self.bleeding_description,
-                "pain": self.pain_level,
-                "complaint": self.chief_complaint,
-            },
-            "treatment": {
-                "oxygen": self.treatment_oxygen,
-                "bandage": self.treatment_bandage,
-                "iv": self.treatment_iv,
-                "cpr": self.treatment_cpr,
-                "neck_collar": self.treatment_neck_collar,
-                "splint": self.treatment_splint,
-                "other": self.treatment_other,
-            },
-            "photos": self.uploaded_photos,
+    async def save_report(self):
+        """Save the completed report to DB."""
+        auth_state = await self.get_state(AuthState)
+        if not auth_state.current_user:
+            return rx.toast.error("You must be logged in to save a report")
+        injuries_data = {
+            "head": self.injury_head,
+            "chest": self.injury_chest,
+            "abdomen": self.injury_abdomen,
+            "legs": self.injury_legs,
+            "arms": self.injury_arms,
+            "spine": self.injury_spine,
+            "burns": self.injury_burns,
         }
-        if is_edit:
-            for i, r in enumerate(self.reports):
-                if r["id"] == report_id:
-                    self.reports[i] = report_data
-                    break
-            msg = "Report updated successfully!"
-        else:
-            self.reports.append(report_data)
-            msg = "Report saved successfully!"
+        assessment_data = {
+            "breathing": self.breathing_status,
+            "bleeding": self.bleeding_status,
+            "bleeding_desc": self.bleeding_description,
+            "pain": self.pain_level,
+            "complaint": self.chief_complaint,
+        }
+        treatment_data = {
+            "oxygen": self.treatment_oxygen,
+            "bandage": self.treatment_bandage,
+            "iv": self.treatment_iv,
+            "cpr": self.treatment_cpr,
+            "neck_collar": self.treatment_neck_collar,
+            "splint": self.treatment_splint,
+            "other": self.treatment_other,
+        }
+        with rx.session() as session:
+            if self.report_id_being_edited:
+                report = session.exec(
+                    select(PatientReport).where(
+                        PatientReport.id == int(self.report_id_being_edited)
+                    )
+                ).first()
+                if report:
+                    report.location = self.location
+                    report.accident_type = self.accident_type
+                    report.accident_date = self.accident_date
+                    report.accident_time = self.accident_time
+                    report.patient_count = self.patient_count
+                    report.is_patient_speaking = self.is_patient_speaking
+                    report.patient_name = self.patient_name
+                    report.patient_age = self.patient_age
+                    report.patient_gender = self.patient_gender
+                    report.patient_contact = self.patient_contact
+                    report.patient_allergies = self.patient_allergies
+                    report.patient_history = self.patient_history
+                    report.est_patient_age = self.est_patient_age
+                    report.est_patient_gender = self.est_patient_gender
+                    report.consciousness_level = self.consciousness_level
+                    report.injuries = injuries_data
+                    report.assessment = assessment_data
+                    report.treatment = treatment_data
+                    report.photos = self.uploaded_photos
+                    report.updated_at = datetime.datetime.utcnow()
+                    session.add(report)
+                    session.commit()
+                    msg = "Report updated successfully!"
+                else:
+                    return rx.toast.error("Report not found for update")
+            else:
+                new_report = PatientReport(
+                    user_id=auth_state.current_user.id,
+                    location=self.location,
+                    accident_type=self.accident_type,
+                    accident_date=self.accident_date,
+                    accident_time=self.accident_time,
+                    patient_count=self.patient_count,
+                    is_patient_speaking=self.is_patient_speaking,
+                    patient_name=self.patient_name,
+                    patient_age=self.patient_age,
+                    patient_gender=self.patient_gender,
+                    patient_contact=self.patient_contact,
+                    patient_allergies=self.patient_allergies,
+                    patient_history=self.patient_history,
+                    est_patient_age=self.est_patient_age,
+                    est_patient_gender=self.est_patient_gender,
+                    consciousness_level=self.consciousness_level,
+                    injuries=injuries_data,
+                    assessment=assessment_data,
+                    treatment=treatment_data,
+                    photos=self.uploaded_photos,
+                )
+                session.add(new_report)
+                session.commit()
+                msg = "Report saved successfully!"
+        await self._load_reports_from_db()
         self.reset_form()
         self.current_step = 1
         return (rx.toast.success(msg), rx.redirect("/"))
 
     @rx.event
-    def load_report_for_edit(self, report_id: str):
+    async def load_report_for_edit(self, report_id: str):
         """Load a report into the form for editing."""
+        if not self.reports:
+            await self._load_reports_from_db()
         target_report = None
         for r in self.reports:
             if r["id"] == report_id:
@@ -340,17 +408,25 @@ class ReportState(rx.State):
             self.report_id_to_delete = ""
 
     @rx.event
-    def confirm_delete(self):
+    async def confirm_delete(self):
         if self.report_id_to_delete:
-            self.reports = [
-                r for r in self.reports if r["id"] != self.report_id_to_delete
-            ]
-            rx.toast.success("Report deleted successfully")
+            with rx.session() as session:
+                report = session.exec(
+                    select(PatientReport).where(
+                        PatientReport.id == int(self.report_id_to_delete)
+                    )
+                ).first()
+                if report:
+                    session.delete(report)
+                    session.commit()
+                    rx.toast.success("Report deleted successfully")
+            await self._load_reports_from_db()
         self.show_delete_dialog = False
         self.report_id_to_delete = ""
 
     @rx.event
-    def start_new_report(self):
+    async def start_new_report(self):
+        await self._load_reports_from_db()
         self.reset_form()
         self.current_step = 1
         return rx.redirect("/create-report")
